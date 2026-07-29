@@ -1,0 +1,721 @@
+---
+title: "Visualize section lengths over time"
+output: html_notebook
+---
+
+```{r Import libraries}
+library(boot)
+library(tidyverse)
+source("code/ggplot_themes.R")
+```
+
+```{r Function definitions}
+boot_ci <- function(data, var, R = 1000) {
+  boot_fn <- function(d, i) mean(d[[var]][i])
+  b <- boot(data, boot_fn, R = R)
+  ci <- boot.ci(b, type = "perc")$percent[4:5]
+  c(lower = ci[1], upper = ci[2])
+}
+```
+
+```{r Import data}
+genetics_sections_longitudinal <- read.csv(
+  "data/section_data_longitudinal/genetics_sections_longitudinal.csv",
+  colClasses = c(
+    "page_name"="character",
+    "revision_id"="integer",
+    "datetime"="Date",
+    "char_props"="numeric",
+    "char_counts"="integer",
+    "date"="Date"
+  )
+  )
+
+# Sort by page name and date for convenience
+genetics_sections_longitudinal <- genetics_sections_longitudinal[
+  order(
+    genetics_sections_longitudinal$page_name, genetics_sections_longitudinal$date
+    ),
+  ]
+```
+
+```{r Play with colours}
+ c(
+      rcartocolor::carto_pal(
+        n    = 8,
+        name = "Bold"
+      )
+    )
+ c("#7F3C8D" "#11A579" "#3969AC" "#F2B701" "#E73F74" "#80BA5A" "#E68310" "#A5AA99")
+ c("#496831", "#EFE287", "#E6E0DB")
+```
+
+```{r Plotting longitudinal genetics sections}
+
+# Group by page name
+# Start with the earliest date for each page and go up to Dec 31, 2025, by day
+# Fill in values
+# Ungroup
+df_filled <- genetics_sections_longitudinal %>%
+  group_by(page_name) %>%
+  complete(date = seq(min(date, na.rm = TRUE), as.Date("2025-12-31"), by = "day")) %>%
+  fill(c(char_props, char_counts), .direction = "down") %>%
+  ungroup()
+
+# mean and median lines
+df_filled_summaries <- df_filled %>%
+  group_by(date) %>%
+  summarise(mean_props = mean(char_props),
+            median_props = median(char_props))
+
+ggplot(data=df_filled) +
+  geom_line(aes(x=date,y=char_props, group=page_name), alpha=0.4, colour="grey75") +
+  geom_line(data=df_filled_summaries, aes(x=date, y=mean_props), colour ="#3969AC", linewidth=0.8) +
+  geom_line(data=df_filled_summaries, aes(x=date, y=median_props), colour ="#F2B701", linewidth=0.8) +
+  ylim(0,1) +
+  xlab("Date") + ylab("Proportion of page") +
+  ggtitle("Genetics sections as proportion of page text") +
+  theme_endline() 
+
+#ggsave(file.path("figures","section_sizes","genetics_sections_proportions.svg"), 
+       #plt, 
+#       width = 10, height = 6, dpi = 300,
+#       device="svg")
+```
+
+
+```{r Plot multiple section types together}
+# Logic is simple
+# Just do the same as above, but only plot the summaries for History + Language + Genetics
+# Can have mean and median (dashed)
+
+# Input data directory
+long_data_dir <- "data/section_data_longitudinal"
+
+# Output directory for figures
+viz_dir <- file.path("figures","section_sizes")
+
+# Colours of lines
+page_line_colour <- "grey75"
+mean_line_colour <- "#7F3C8D"
+med_line_colour <- "#11A579"
+
+# plotting parameters
+w_ <- 10
+h_ <- 6
+dpi_ <- 300
+                     
+# List to contain data frames
+sections_long <- list()
+
+# Import and sort data frames
+#for (fname_ in list.files(long_data_dir)){
+for (fname_ in c("language_only_sections_longitudinal.csv")){
+  subject <- str_split(fname_,"_")[[1]][1]
+  print(subject)
+
+  sections_long[[subject]] <- read.csv(
+    file.path(long_data_dir, fname_),
+              colClasses = c(
+                "page_name"="character",
+                "revision_id"="integer",
+                "datetime"="Date",
+                "char_props"="numeric",
+                "char_counts"="integer",
+                "date"="Date"
+                )
+    )
+  
+  # Drop variables we don't need
+  sections_long[[subject]] <- sections_long[[subject]][,c("page_name","char_props","char_counts","date")]
+  
+  # Sort by page name and date for convenienc
+  sections_long[[subject]] <- sections_long[[subject]][
+    order(
+      sections_long[[subject]]$page_name, sections_long[[subject]]$date
+    ),
+  ]
+  
+  # Backfill data
+  df_filled <- sections_long[[subject]] %>%
+  group_by(page_name) %>%
+  complete(date = seq(min(date, na.rm = TRUE), as.Date("2025-12-31"), by = "day")) %>%
+  fill(c(char_props, char_counts), .direction = "down") %>%
+  ungroup()
+
+  # mean and median lines
+  df_filled_summaries <- df_filled %>%
+    group_by(date) %>%
+    summarise(mean_props = mean(char_props),
+              median_props = median(char_props))
+  
+  df_filled_thinned <- df_filled %>%
+    filter(as.integer(date - min(date)) %% 7 == 0)  # every 7th day
+  
+  p <- ggplot(data = df_filled_thinned) +
+    geom_line(aes(x = date, y = char_props, group = page_name), alpha = 0.4, colour = page_line_colour) +
+    geom_line(data = df_filled_summaries, aes(x = date, y = mean_props), colour = mean_line_colour, linewidth = 0.8) +
+    geom_line(data = df_filled_summaries, aes(x = date, y = median_props), colour = med_line_colour, linewidth = 0.8) +
+    ylim(0, 1) +
+    xlab("Date") + ylab("Proportion of page") +
+    ggtitle(str_to_sentence(paste(subject, "sections as proportion of page text"))) +
+    theme_endline() +
+    theme(
+      axis.text.x = element_text(size=10),
+      axis.title.x = element_text(size=15),
+      axis.text.y = element_text(size=10),
+      axis.title.y = element_text(size=15),
+      plot.title = element_text(size=20)
+    )
+  
+  # Annotate mean and median
+#  label_data <- df_filled_summaries
+#  label_data <- df_filled_summaries %>%
+#  group_by(keyword_label) %>%
+#  filter(date == max(date)) %>%
+#  slice(1) %>%
+#  ungroup()
+  
+  
+  print(p)
+  
+  #ggsave(file.path(viz_dir, paste0(subject,"_sections_proportions.svg")), 
+  #       p,
+  #       width = w_, height = h_, dpi = dpi_,
+  #       device="svg")
+    
+}
+
+
+```
+
+
+```{r Write the summary stats of the sections together}
+
+# Input data directory
+long_data_dir <- "data/section_data_longitudinal"
+
+# Output directory for figures
+viz_dir <- file.path("figures","section_sizes")
+
+# Colours of lines
+subject_colours <- c(
+  "#7F3C8D", "#11A579", "#3969AC", "#F2B701"
+)
+names(subject_colours) <- c("genetics","history","culture","language")
+
+# plotting parameters
+w_ <- 10
+h_ <- 6
+dpi_ <- 300
+                     
+# List to contain data frames
+sections_long <- list()
+
+# Initialize ggplot object
+p <- ggplot() + 
+              ylim(0, 0.75) +
+    xlab("Date") + ylab("Proportion of page") +
+    theme_endline() +
+    theme(
+      axis.text.x = element_text(size=11),
+      axis.title.x = element_text(size=15),
+      axis.text.y = element_text(size=11),
+      axis.title.y = element_text(size=15),
+      plot.title = element_text(size=20)
+    ) + 
+  ggtitle("Proportion of pages by section type over time") +
+    scale_x_date(
+    expand = c(0, 0),
+    limits = c(as.Date("2001-01-01"), as.Date("2025-12-31") + 500),  # extra room for labels, originally 25
+    date_breaks = "5 years",
+    date_labels = "%Y"
+  )
+
+# Set up a data frame for summary statistics
+label_data <- 
+  data.frame(
+    date=character(),
+    measure=character(),
+    val=numeric()
+    )
+
+
+# Import and sort data frames
+for (fname_ in list.files(long_data_dir)){
+#for (fname_ in c("language_only_sections_longitudinal.csv")){}
+  subject <- str_split(fname_,"_")[[1]][1]
+  print(subject)
+
+  sections_long[[subject]] <- read.csv(
+    file.path(long_data_dir, fname_),
+              colClasses = c(
+                "page_name"="character",
+                "revision_id"="integer",
+                "datetime"="Date",
+                "char_props"="numeric",
+                "char_counts"="integer",
+                "date"="Date"
+                )
+    )
+  
+  # Drop variables we don't need
+  sections_long[[subject]] <- sections_long[[subject]][,c("page_name","char_props","char_counts","date")]
+  
+  # Sort by page name and date for convenienc
+  sections_long[[subject]] <- sections_long[[subject]][
+    order(
+      sections_long[[subject]]$page_name, sections_long[[subject]]$date
+    ),
+  ]
+  
+  # Backfill data
+  df_filled <- sections_long[[subject]] %>%
+  group_by(page_name) %>%
+  complete(date = seq(min(date, na.rm = TRUE), as.Date("2025-12-31"), by = "day")) %>%
+  fill(c(char_props, char_counts), .direction = "down") %>%
+  ungroup()
+
+  # mean and median lines
+  # Get the char counts and bootstrapped values for printing and add to the manuscript
+  df_filled_summaries <- df_filled %>%
+    group_by(date) %>%
+    summarise(
+      mean_props   = mean(char_props),
+      median_props = median(char_props),
+      mean_chars   = mean(char_counts),
+      median_chars = median(char_counts)
+    )
+  
+  # Label data needs:
+  # Date (2025-12-01)
+  # Topic + Stat ("Mean (History)")
+  # Value
+  # Append summary stats
+  label_data <- rbind.data.frame(
+    label_data,
+    #list(date=as.Date("2025-12-31"), measure=paste0("Mean (",subject,")"), val=last(df_filled_summaries)[["mean_props"]])
+    list(date=as.Date("2025-12-31"), 
+         section_type=paste0(str_to_title(subject), " (mean=", round(last(df_filled_summaries)[["mean_props"]],2) ,")"),
+         measure="mean",
+         val=last(df_filled_summaries)[["mean_props"]])
+  )
+  label_data <- rbind.data.frame(
+    label_data,
+    #list(date=as.Date("2025-12-31"), measure=paste0("Median (",subject,")"), val=last(df_filled_summaries)[["median_props"]])
+    list(date=as.Date("2025-12-31"), 
+         section_type=paste0(str_to_title(subject), " (median=", round(last(df_filled_summaries)[["median_props"]],2) ,")"),
+         measure="median",
+         val=last(df_filled_summaries)[["median_props"]])
+  )
+  
+  # Thin the data (we don't need daily points; makes the SVG too massive)
+  df_filled_thinned <- df_filled %>%
+    filter(as.integer(date - min(date)) %% 14 == 0)  # every nth day
+  
+  # Add mean and median data
+  p <- p +
+    geom_line(data = df_filled_summaries, aes(x = date, y = mean_props), 
+              linewidth = 0.8, colour=subject_colours[subject]) +
+    geom_line(data = df_filled_summaries, aes(x = date, y = median_props), 
+              linewidth = 0.8, colour=subject_colours[subject], linetype = "dotted")
+  
+  print(df_filled_summaries[nrow(df_filled_summaries),])
+  
+}
+
+label_push <- 5000
+
+p <- p + 
+  geom_text_repel(
+    data        = label_data,
+    aes(
+      x=date, label = section_type, colour = section_type, y=val
+      ),
+    colour = c(
+      subject_colours["genetics"],
+      subject_colours["genetics"],
+      subject_colours["history"],
+      subject_colours["history"],
+      subject_colours["language"],
+      subject_colours["language"]),
+    family      = "sans",
+    fontface    = "bold",
+    size        = 3.2,
+    direction   = "y",           # repel vertically only
+    xlim        = c(as.Date("2025-12-31") + label_push, NA),  # push labels past the last date
+    hjust       = 0,
+    segment.size      = .5,
+    segment.alpha     = .5,
+    segment.linetype  = "dotted",
+    segment.curvature = -0.1,
+    segment.ncp       = 3,
+    segment.angle     = 20,
+    box.padding       = .4
+  ) +
+
+  # Coordinate system: clip = "off" lets labels render outside the panel
+  coord_cartesian(clip = "off")
+  
+print(p)
+
+ #ggsave(file.path(viz_dir, paste0("sections_proportions_combined.png")), 
+#         p,
+#         width = w_, height = h_, dpi = dpi_,
+#         device="png")
+
+```
+
+```{r Animate results, mean only}
+
+# Input data directory
+long_data_dir <- "data/section_data_longitudinal"
+
+# Output directory for figures
+viz_dir <- file.path("figures","section_sizes")
+
+# Colours of lines
+subject_colours <- c(
+  "#7F3C8D", "#11A579", "#3969AC", "#F2B701"
+)
+names(subject_colours) <- c("genetics","history","culture","language")
+
+# plotting parameters
+w_ <- 10
+h_ <- 6
+dpi_ <- 300
+                     
+# List to contain data frames
+sections_long <- list()
+
+# Initialize ggplot object
+p <- ggplot() + 
+              ylim(0, 0.75) +
+    xlab("Date") + ylab("Proportion of page") +
+    theme_endline() +
+    theme(
+      axis.text.x = element_text(size=11),
+      axis.title.x = element_text(size=15),
+      axis.text.y = element_text(size=11),
+      axis.title.y = element_text(size=15),
+      plot.title = element_text(size=20)
+    ) + 
+  ggtitle("How much of a page is taken up by a section?") +
+    scale_x_date(
+    expand = c(0, 0),
+    limits = c(as.Date("2001-01-01"), as.Date("2025-12-31") + 500),  # extra room for labels, originally 25
+    date_breaks = "5 years",
+    date_labels = "%Y"
+  )
+
+# Set up a data frame for summary statistics
+label_data <- 
+  data.frame(
+    date=character(),
+    measure=character(),
+    val=numeric()
+    )
+
+manual_files <- c("history_only_sections_longitudinal.csv",
+                  "language_only_sections_longitudinal.csv",
+                  "genetics_sections_longitudinal.csv") # Manual list for animation
+
+# Import and sort data frames
+#for (fname_ in list.files(long_data_dir)){
+for (fname_ in manual_files){
+#for (fname_ in c("language_only_sections_longitudinal.csv")){}
+  subject <- str_split(fname_,"_")[[1]][1]
+  print(subject)
+
+  sections_long[[subject]] <- read.csv(
+    file.path(long_data_dir, fname_),
+              colClasses = c(
+                "page_name"="character",
+                "revision_id"="integer",
+                "datetime"="Date",
+                "char_props"="numeric",
+                "char_counts"="integer",
+                "date"="Date"
+                )
+    )
+  
+  # Drop variables we don't need
+  sections_long[[subject]] <- sections_long[[subject]][,c("page_name","char_props","char_counts","date")]
+  
+  # Sort by page name and date for convenienc
+  sections_long[[subject]] <- sections_long[[subject]][
+    order(
+      sections_long[[subject]]$page_name, sections_long[[subject]]$date
+    ),
+  ]
+  
+  # Backfill data
+  df_filled <- sections_long[[subject]] %>%
+  group_by(page_name) %>%
+  complete(date = seq(min(date, na.rm = TRUE), as.Date("2025-12-31"), by = "day")) %>%
+  fill(c(char_props, char_counts), .direction = "down") %>%
+  ungroup()
+
+  # mean and median lines
+  # Get the char counts and bootstrapped values for printing and add to the manuscript
+  df_filled_summaries <- df_filled %>%
+    group_by(date) %>%
+    summarise(
+      mean_props   = mean(char_props),
+      #median_props = median(char_props),
+      mean_chars   = mean(char_counts),
+      #median_chars = median(char_counts)
+    )
+  
+  # Label data needs:
+  # Date (2025-12-01)
+  # Topic + Stat ("Mean (History)")
+  # Value
+  # Append summary stats
+  label_data <- rbind.data.frame(
+    label_data,
+    list(date=as.Date("2025-12-31"), 
+         section_type=paste0(str_to_title(subject), " (mean=", round(last(df_filled_summaries)[["mean_props"]],2) ,")"),
+         measure="mean",
+         val=last(df_filled_summaries)[["mean_props"]])
+  )
+  
+  # Thin the data (we don't need daily points; makes the SVG too massive)
+  df_filled_thinned <- df_filled %>%
+    filter(as.integer(date - min(date)) %% 14 == 0)  # every nth day
+  
+  # Add mean and median data
+  p <- p +
+    geom_line(data = df_filled_summaries, aes(x = date, y = mean_props), 
+              linewidth = 0.8, colour=subject_colours[subject])
+  
+  print(df_filled_summaries[nrow(df_filled_summaries),])
+  
+}
+
+label_push <- 3250
+
+p <- p + 
+  geom_text_repel(
+    data        = label_data,
+    aes(
+      x=date, label = section_type, colour = section_type, y=val
+      ),
+    colour = c(
+      subject_colours["history"],
+      subject_colours["language"],
+      subject_colours["genetics"]),
+    family      = "sans",
+    fontface    = "bold",
+    size        = 3.2,
+    direction   = "y",           # repel vertically only
+    xlim        = c(as.Date("2025-12-31") + label_push, NA),  # push labels past the last date
+    hjust       = 0,
+    segment.size      = .5,
+    segment.alpha     = .5,
+    segment.linetype  = "dotted",
+    segment.curvature = -0.1,
+    segment.ncp       = 3,
+    segment.angle     = 20,
+    box.padding       = .4
+  ) +
+
+  # Coordinate system: clip = "off" lets labels render outside the panel
+  coord_cartesian(clip = "off")
+  
+print(p)
+
+```
+
+
+```{r Re-organized for animation}
+
+all_summaries <- list()
+
+for (fname_ in manual_files) {
+  subject <- str_split(fname_, "_")[[1]][1]
+    print(subject)
+
+  sections_long[[subject]] <- read.csv(
+    file.path(long_data_dir, fname_),
+              colClasses = c(
+                "page_name"="character",
+                "revision_id"="integer",
+                "datetime"="Date",
+                "char_props"="numeric",
+                "char_counts"="integer",
+                "date"="Date"
+                )
+    )
+  
+  # Drop variables we don't need
+  sections_long[[subject]] <- sections_long[[subject]][,c("page_name","char_props","char_counts","date")]
+  
+  # Sort by page name and date for convenienc
+  sections_long[[subject]] <- sections_long[[subject]][
+    order(
+      sections_long[[subject]]$page_name, sections_long[[subject]]$date
+    ),
+  ]
+  
+  # Backfill data
+  df_filled <- sections_long[[subject]] %>%
+  group_by(page_name) %>%
+  complete(date = seq(min(date, na.rm = TRUE), as.Date("2025-12-31"), by = "day")) %>%
+  fill(c(char_props, char_counts), .direction = "down") %>%
+  ungroup()
+
+  # mean and median lines
+  # Get the char counts and bootstrapped values for printing and add to the manuscript
+  df_filled_summaries <- df_filled %>%
+    group_by(date) %>%
+    summarise(
+      mean_props   = mean(char_props),
+      mean_chars   = mean(char_counts),
+    )
+  
+  all_summaries[[subject]] <- df_filled_summaries %>%
+    mutate(subject = subject)
+}
+
+summaries_combined <- bind_rows(all_summaries) %>%
+  filter(as.integer(date - min(date)) %% 7 == 0)  # weekly thinning
+
+```
+
+```{r Animation code, plotted together}
+library(gganimate)
+
+p_anim <- ggplot(summaries_combined, aes(x = date, y = mean_props, 
+                                          group = subject, colour = subject)) +
+  geom_line(linewidth = 0.8) +
+  scale_colour_manual(values = subject_colours, guide = "none") +
+  ylim(0, 0.75) +
+  xlab("Date") + ylab("Proportion of page") +
+  ggtitle("How much of a page is taken up by a section?") +
+  scale_x_date(
+    expand = c(0, 0),
+    limits = c(as.Date("2001-01-01"), as.Date("2025-12-31") + 500),
+    date_breaks = "5 years",
+    date_labels = "%Y"
+  ) +
+  theme_endline() +
+  transition_reveal(date)
+
+animate(p_anim, nframes = 200, fps = 20, 
+        width = w_ * dpi_ / 3, height = h_ * dpi_ / 3, res = dpi_ / 3,
+        renderer = gifski_renderer(loop=FALSE))
+
+anim_save(file.path(viz_dir, "section_proportions_together.gif"))
+```
+
+```{r Animation code, plotted sequentially}
+
+subject_order <- c("history", "language", "genetics")
+frames_per_subject <- 100
+
+summaries_staged <- summaries_combined %>%
+  mutate(
+    stage = match(subject, subject_order),
+    # normalise date to 0-1 within its own line, then offset by stage
+    date_frac = as.numeric(date - min(date)) / as.numeric(max(date) - min(date)),
+    reveal_at = (stage - 1) * frames_per_subject + date_frac * frames_per_subject
+  )
+
+p_anim <- ggplot(summaries_staged, aes(x = date, y = mean_props,
+                                        group = subject, colour = subject)) +
+  geom_line(linewidth = 0.8) +
+  scale_colour_manual(values = subject_colours, guide = "none") +
+  ylim(0, 0.75) +
+  theme_endline() +
+  transition_reveal(reveal_at)
+
+animate(p_anim, nframes = 200, fps = 20, 
+        width = w_ * dpi_ / 3, height = h_ * dpi_ / 3, res = dpi_ / 3,
+        renderer = gifski_renderer(loop=FALSE))
+
+anim_save(file.path(viz_dir, "section_proportions_sequential.gif"))
+
+```
+
+```{r Animation with labels tracking, plotted simultaneously}
+
+p_anim <- ggplot(summaries_combined, aes(x = date, y = mean_props,
+                                          group = subject, colour = subject)) +
+  geom_line(linewidth = 0.8) +
+  geom_text(
+    aes(label = paste0(str_to_title(subject), " (", round(mean_props, 2), ")")),
+    hjust = 0,
+    nudge_x = 200,          # push label right of the line's leading point
+    fontface = "bold",
+    size = 3.2,
+    family = "sans"
+  ) +
+  scale_colour_manual(values = subject_colours, guide = "none") +
+  ylim(0, 0.75) +
+  xlab("Date") + ylab("Proportion of page") +
+  ggtitle("How much of a page is taken up by a section?") +
+  scale_x_date(
+    expand = c(0, 0),
+    limits = c(as.Date("2001-01-01"), as.Date("2025-12-31") + 500),
+    date_breaks = "5 years",
+    date_labels = "%Y"
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_endline() +
+  transition_reveal(date)
+
+animate(p_anim, nframes = 200, fps = 20,
+        width = w_ * dpi_ / 3, height = h_ * dpi_ / 3, res = dpi_ / 3,
+        renderer = gifski_renderer(loop = FALSE))
+
+#anim_save(file.path(viz_dir, "section_proportions.gif"))
+
+```
+
+```{r Animation with labels tracking, sequential}
+subject_order <- c("history", "language", "genetics")
+frames_per_subject <- 100
+
+summaries_staged <- summaries_combined %>%
+  mutate(
+    stage     = match(subject, subject_order),
+    date_frac = as.numeric(date - min(date)) / as.numeric(max(date) - min(date)),
+    reveal_at = (stage - 1) * frames_per_subject + date_frac * frames_per_subject
+  )
+
+p_anim <- ggplot(summaries_staged, aes(x = date, y = mean_props,
+                                        group = subject, colour = subject)) +
+  geom_line(linewidth = 0.8) +
+  geom_text(
+    aes(label = paste0(str_to_title(subject), " (", round(mean_props, 2), ")")),
+    hjust = 0,
+    nudge_x = 200,
+    fontface = "bold",
+    size = 3.2,
+    family = "sans"
+  ) +
+  scale_colour_manual(values = subject_colours, guide = "none") +
+  ylim(0, 0.75) +
+  xlab("Date") + ylab("Proportion of page") +
+  ggtitle("How much of a page is taken up by a section?") +
+  scale_x_date(
+    expand = c(0, 0),
+    limits = c(as.Date("2001-01-01"), as.Date("2025-12-31") + 500),
+    date_breaks = "5 years",
+    date_labels = "%Y"
+  ) +
+  coord_cartesian(clip = "off") +
+  theme_endline() +
+  transition_reveal(reveal_at)
+
+animate(p_anim,
+        nframes  = frames_per_subject * length(subject_order),
+        fps      = 20,
+        width    = w_ * dpi_ / 3,
+        height   = h_ * dpi_ / 3,
+        res      = dpi_ / 3,
+        renderer = gifski_renderer(loop = FALSE))
+
+anim_save(file.path(viz_dir, "section_proportions_tracking_labels_sequential.gif"))
+```

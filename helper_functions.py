@@ -1,3 +1,11 @@
+"""
+A variety of helper functions that I use.
+Much of it is copied or based on the official Mediawiki API resources.
+
+Authorship:
+- Alex Diaz-Papkovich
+"""
+
 import json
 import os
 import requests

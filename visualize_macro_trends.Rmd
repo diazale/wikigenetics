@@ -1,0 +1,103 @@
+---
+title: "Visualize macro trends"
+output: html_notebook
+---
+
+```{r Import libraries}
+library(tidyverse)
+```
+
+```{r Import data}
+macro_sections <- read_tsv("tables/macro_trends_genetics_section(1).tsv") %>% select(-`...1`)
+macro_keywords <- read_tsv("tables/macro_trends_keywords(1).tsv") %>% select(-`...1`)
+macro_sections_top <- read_tsv("tables/macro_trends_top_1000_genetics_section(1).tsv") %>% select(-`...1`)
+macro_keywords_top <- read_tsv("tables/macro_trends_top_1000_keywords(1).tsv") %>% select(-`...1`)
+```
+
+```{r Cleaned up plotting}
+
+infile <- "top1000" # "corpus" or "top1000"
+dev_ <- "svg"
+dpi_ <- 300
+
+if (infile=="corpus"){
+  df <- macro_keywords
+  
+  legend_pos <- "right"
+  title_ <- "Genetics keywords over time (whole corpus)"
+  pct_breaks <- seq(0,0.16,0.02)
+  
+  w_ <- 8
+  h_ <- 6
+  fname_ <- "corpus_pages_keywords"
+  fname_ <- paste0(fname_, ".", dev_)
+} else if (infile=="top1000") {
+  # Drop the legend (since they share the legend values)
+  # These figures are meant to be side-by-side panels A and B
+  df <- macro_keywords_top
+  
+  legend_pos <- "none"
+  title_ <- "Genetics keywords over time (top 1000)"
+  pct_breaks_ <- seq(0,0.6,0.05)
+  
+  w_ <- 6
+  h_ <- 6
+  fname_ <- "corpus_pages_keywords_top1000"
+  fname_ <- paste0(fname_, ".", dev_)
+}
+
+# Adjust the year for consistency (these are all Dec 31)
+df$year <- df$year+1
+
+# Reshape corpus_pages and corpus_kws into long format for a shared y-axis + legend
+df_long <- df %>%
+  select(year, corpus_pages, corpus_kws) %>%
+  pivot_longer(cols = c(corpus_pages, corpus_kws),
+               names_to = "series", values_to = "value")
+
+# Scaling factor to map corpus_kws_pct onto the primary axis range
+scale_factor <- max(df$corpus_pages, na.rm = TRUE) / max(df$corpus_kws_pct, na.rm = TRUE)
+
+ggplot() +
+  geom_line(data = df_long, aes(x = year, y = value, color = series, linetype = series),
+            linewidth = 1) +
+  #geom_point(data = df_long, aes(x = year, y = value, color = series)) +
+  geom_line(data = df, aes(x = year, y = corpus_kws_pct * scale_factor,
+                           color = "corpus_kws_pct", linetype = "corpus_kws_pct"),
+            linewidth = 1) +
+  scale_x_continuous(breaks = seq(2001, 2026, by = 5)) +
+  scale_y_continuous(
+    name = "Number of corpus pages",
+    sec.axis = sec_axis(~ . / scale_factor, name = "Keyword %", 
+                        breaks = pct_breaks_,
+                        labels = scales::percent_format(accuracy = 1))
+  ) +
+  scale_color_manual(
+    values = c("corpus_pages" = "#000000", "corpus_kws" = "#000000", "corpus_kws_pct" = "#F2B701"),
+    labels = c("corpus_pages" = "Pages (all)", "corpus_kws" = "Pages with keywords", "corpus_kws_pct" = "Keyword %"),
+    breaks = c("corpus_pages", "corpus_kws", "corpus_kws_pct") # for legend sorting
+  ) +
+  scale_linetype_manual(
+    values = c("corpus_pages" = "solid", "corpus_kws" = "21", "corpus_kws_pct" = "11"),
+    labels = c("corpus_pages" = "Pages (all)", "corpus_kws" = "Pages with keywords", "corpus_kws_pct" = "Keyword %"),
+    breaks = c("corpus_pages", "corpus_kws", "corpus_kws_pct") # for legend sorting
+  ) +
+  labs(x = "Year", color = "Series", linetype = "Series") +
+  theme_minimal() +
+  theme(
+    axis.text.y.right  = element_text(color = "#F2B701"),
+    axis.ticks.y.right = element_line(color = "#F2B701"),
+    axis.title.y.right = element_text(color = "#F2B701"),
+    legend.position = legend_pos,
+    legend.title = element_blank(),
+    plot.title        = ggplot2::element_text(
+        color = "grey10", size = 14, face = "bold",
+        margin = ggplot2::margin(t = 15), hjust = 0
+      )
+  ) + 
+  ggtitle(title_)
+
+#ggsave(file.path("figures", fname_), device=dev_,
+#       width=w_, height=h_, dpi=dpi_)
+
+```

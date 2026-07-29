@@ -1,0 +1,432 @@
+---
+title: "Keywords over time"
+author: "Alex Diaz-Papkovich"
+date: "2026-04-15"
+output: html_document
+---
+
+```{r Setup}
+library(paletteer)
+library(tidyverse)
+library(ggrepel)
+
+data_dir <- "data/keywords_over_time"
+```
+
+```{r Import data}
+ts_data <- read_tsv(file.path(data_dir, "corpus_keywords_over_time_cumulative.tsv"))
+
+# Format date
+ts_data$date <- lubridate::ymd(ts_data$date)
+```
+
+```{r List of variables for my reference}
+str(ts_data)
+
+```
+keywords = ["total_keywords","admix","autosom","chromosom","genetic","genom","haplo","pca","mt","y","DNA"]
+
+Try: https://r-graph-gallery.com/web-line-chart-with-labels-at-end-of-line.html
+
+
+```{r Keyword counts}
+# How far to push the labels past the dates
+label_push <- 5000 # originally 2
+
+# Choose the variables to plot
+vars <- c("admix","autosom","chromosom","genetic","genom","haplo","pca","mt","y","DNA")
+
+# Labels to plot
+label_map <-c(
+    "admix" = "Admix-",
+    "autosom" = "Autosom-",
+    "chromosom" = "Chromosom-",
+    "genetic" = "Genetic-",
+    "genom" = "Genom-",
+    "haplo" = "Haplo-",
+    "pca" = "PCA",
+    "mt" = "Mitochon-",
+    "y" = "Y-DNA",
+    "DNA" = "DNA")
+
+# Choose which dataset to work with
+fnames <- c(
+  "corpus_keywords_over_time_cumulative.tsv",
+  "demonyms_keywords_over_time_cumulative.tsv"
+)
+
+names(fnames) <- c(
+  "Corpus",
+  "Demonyms"
+)
+
+# Which file to work with specifically
+fname <- fnames[1]
+
+# Plotting parameters
+w_ <- 10
+h_ <- 6
+dev_ <- "png"
+dpi_ <- 300
+
+# --- Load data ----------------------------------------------------------------
+
+df <- read.table(
+  #"test.txt",
+  file.path(data_dir, fname),
+  header = TRUE,
+  sep = "",
+  stringsAsFactors = FALSE
+)
+
+df <- df %>%
+  mutate(date = as.Date(date))
+
+# Convert wide to tall
+df <- pivot_longer(df, cols = vars, 
+                        names_to = "keyword", 
+                        values_to = "count")
+
+df <- df %>%
+  mutate(keyword_label = label_map[keyword])
+
+# --- Label data (last date per keyword) ---------------------------------------
+
+label_data <- df %>%
+  group_by(keyword_label) %>%
+  filter(date == max(date)) %>%
+  slice(1) %>%
+  ungroup()
+
+# --- Theme --------------------------------------------------------------------
+
+theme_set(theme_minimal(base_family = "sans"))
+
+theme_update(
+  #axis.title        = element_blank(),
+  axis.text         = element_text(color = "grey40"),
+  axis.text.x       = element_text(size = 11, margin = margin(t = 5)),
+  axis.text.y       = element_text(size = 10, margin = margin(r = 5)),
+  axis.ticks        = element_line(color = "grey91", linewidth = .5),
+  axis.ticks.length = unit(0.3, "lines"),
+  panel.grid        = element_blank(),
+  plot.margin       = margin(20, 100, 20, 40),  # wide right margin for labels
+  plot.background   = element_rect(fill = "grey98", color = "grey98"),
+  panel.background  = element_rect(fill = "grey98", color = "grey98"),
+  plot.title        = element_text(
+    color = "grey10", size = 14, face = "bold", margin = margin(t = 15)
+  ),
+  plot.title.position = "plot",
+  legend.position   = "none"
+)
+
+# --- Build plot ---------------------------------------------------------------
+
+# Horizontal grid lines at round count values
+y_breaks <- pretty(df$count, n = 6)
+
+plt <- ggplot(df, aes(x = date, y = count, group = keyword_label)) +
+
+  # Custom grid lines (drawn manually so they sit behind the lines)
+  geom_segment(
+    data = tibble(y = y_breaks,
+                  #x1 = min(df$date), 
+                  x1 = as.Date("2001-01-01"), 
+                  x2 = max(df$date)),
+    aes(x = x1, xend = x2, y = y, yend = y),
+    inherit.aes = FALSE,
+    color = "grey91",
+    linewidth = .5
+  ) +
+
+  # All lines in a single neutral color
+  # This is not really applied here but is in the sample page given
+  # Keeping it in case it's useful later
+  geom_line(
+    aes(color = keyword_label),
+    linewidth = .5 # originally .8
+  ) +
+  
+  geom_vline(
+    #aes(xintercept = as.Date("2001-03-28")), 
+    aes(xintercept = min(df[["date"]])), 
+    color = "grey40",
+    linetype = "dotted",
+    size = .6,
+    alpha = 0.6
+  ) +
+  
+  annotate(
+    #"text", x = as.Date("2001-03-28"), y = 3500
+    "text", x = min(df[["date"]]), y = max(df$count)/2, 
+    label = "  Earliest edit",
+    size = 3.5,
+    color = "grey40",
+    hjust = 0
+  ) +
+  
+  # End-of-line labels via ggrepel
+  geom_text_repel(
+    data        = label_data,
+    aes(label   = keyword_label, color = keyword_label),
+    family      = "sans",
+    fontface    = "bold",
+    size        = 3.2,
+    direction   = "y",           # repel vertically only
+    xlim        = c(max(df$date) + label_push, NA),  # push labels past the last date
+    hjust       = 0,
+    segment.size      = .5,
+    segment.alpha     = .5,
+    segment.linetype  = "dotted",
+    segment.curvature = -0.1,
+    segment.ncp       = 3,
+    segment.angle     = 20,
+    box.padding       = .4
+  ) +
+
+  # Coordinate system: clip = "off" lets labels render outside the panel
+  coord_cartesian(clip = "off") +
+
+  scale_x_date(
+    expand = c(0, 0),
+    #limits = c(min(df$date), max(df$date) + 500),  # extra room for labels, originally 25
+    limits = c(as.Date("2001-01-01"), max(df$date) + 500),  # extra room for labels, originally 25
+    date_breaks = "5 years",
+    #date_labels = "%b %Y"
+    date_labels = "%Y"
+  ) +
+
+  scale_y_continuous(
+    expand = c(0, 0),
+    breaks = y_breaks
+  ) +
+
+  scale_color_manual(
+    values = c(
+      rcartocolor::carto_pal(
+        n    = n_distinct(df$keyword_label),
+        name = "Bold"
+      )
+    )
+  ) +
+  
+  ggtitle(paste0("Keyword counts over time (",names(fname),")\n")) +
+  xlab("Date") + ylab("Count")
+# +
+  #labs(title = "Keyword counts over time")
+
+plt
+
+#ggsave("line_chart_square.png", plt, width = 6, height = 6, dpi = 300, bg = "grey98")
+#ggsave(file.path("figures",
+#                 paste0("keywords_over_time_",names(fname),".", dev_)), 
+#       plt, 
+#       width = w_, height = h_, dpi = dpi_, bg = "grey98",
+#       device=dev_) 
+
+```
+
+```{r Keyword presence}
+# Plotting parameters
+w_ <- 10
+h_ <- 6
+dev_ <- "svg"
+dpi_ <- 300
+
+# How far to push the labels past the dates
+label_push <- 5000 # originally 2
+
+fnames <- c(
+  "corpus_keywords_over_time_cumulative.tsv",
+  "demonyms_keywords_over_time_cumulative.tsv"
+)
+
+names(fnames) <- c(
+  "Corpus",
+  "Demonyms"
+)
+
+fname <- fnames[1]
+
+label_map <-c(
+    "admix_presence" = "Admix-",
+    "autosom_presence" = "Autosom-",
+    "chromosom_presence" = "Chromosom-",
+    "genetic_presence" = "Genetic-",
+    "genom_presence" = "Genom-",
+    "haplo_presence" = "Haplo-",
+    "pca_presence" = "PCA",
+    "mt_presence" = "Mitochon-",
+    "y_presence" = "Y-DNA",
+    "DNA_presence" = "DNA")
+
+vars <- c("admix_presence","autosom_presence","chromosom_presence","genetic_presence","genom_presence","haplo_presence","pca_presence","mt_presence","y_presence","DNA_presence")
+
+# --- Load data ----------------------------------------------------------------
+
+df <- read.table(
+  #"test.txt",
+  file.path(data_dir, fname),
+  header = TRUE,
+  sep = "",
+  stringsAsFactors = FALSE
+)
+
+df <- df %>%
+  mutate(date = as.Date(date))
+
+# Convert wide to tall
+df <- pivot_longer(df, cols = vars, 
+                        names_to = "keyword", 
+                        values_to = "count")
+
+df <- df %>%
+  mutate(keyword_label = label_map[keyword])
+
+# --- Label data (last date per keyword) ---------------------------------------
+
+label_data <- df %>%
+  group_by(keyword_label) %>%
+  filter(date == max(date)) %>%
+  slice(1) %>%
+  ungroup()
+
+# --- Theme --------------------------------------------------------------------
+
+theme_set(theme_minimal(base_family = "sans"))
+
+theme_update(
+  #axis.title        = element_blank(),
+  axis.text         = element_text(color = "grey40"),
+  axis.text.x       = element_text(size = 11, margin = margin(t = 5)),
+  axis.text.y       = element_text(size = 10, margin = margin(r = 5)),
+  axis.ticks        = element_line(color = "grey91", linewidth = .5),
+  axis.ticks.length = unit(0.3, "lines"),
+  panel.grid        = element_blank(),
+  plot.margin       = margin(20, 100, 20, 40),  # wide right margin for labels
+  plot.background   = element_rect(fill = "grey98", color = "grey98"),
+  panel.background  = element_rect(fill = "grey98", color = "grey98"),
+  plot.title        = element_text(
+    color = "grey10", size = 14, face = "bold", margin = margin(t = 15)
+  ),
+  plot.title.position = "plot",
+  legend.position   = "none"
+)
+
+# --- Build plot ---------------------------------------------------------------
+
+# Horizontal grid lines at round count values
+y_breaks <- pretty(df$count, n = 6)
+
+plt <- ggplot(df, aes(x = date, y = count, group = keyword_label)) +
+
+  # Custom grid lines (drawn manually so they sit behind the lines)
+  geom_segment(
+    data = tibble(y = y_breaks,
+                  #x1 = min(df$date), 
+                  x1 = as.Date("2001-01-01"), 
+                  x2 = max(df$date)),
+    aes(x = x1, xend = x2, y = y, yend = y),
+    inherit.aes = FALSE,
+    color = "grey91",
+    linewidth = .5
+  ) +
+
+  # All lines in a single neutral color
+  # This is not really applied here but is in the sample page given
+  # Keeping it in case it's useful later
+  geom_line(
+    aes(color = keyword_label),
+    linewidth = .5 # originally .8
+  ) +
+  
+  geom_vline(
+    #aes(xintercept = as.Date("2001-03-28")), 
+    aes(xintercept = min(df[["date"]])), 
+    color = "grey40",
+    linetype = "dotted",
+    size = .6,
+    alpha = 0.6
+  ) +
+  
+  annotate(
+    #"text", x = as.Date("2001-03-28"), y = 3500
+    "text", x = min(df[["date"]]), y = max(df$count)/2, 
+    label = "  Earliest edit",
+    size = 3.5,
+    color = "grey40",
+    hjust = 0
+  ) +
+  
+  # End-of-line labels via ggrepel
+  geom_text_repel(
+    data        = label_data,
+    aes(label   = keyword_label, color = keyword_label),
+    family      = "sans",
+    fontface    = "bold",
+    size        = 3.2,
+    direction   = "y",           # repel vertically only
+    xlim        = c(max(df$date) + label_push, NA),  # push labels past the last date
+    hjust       = 0,
+    segment.size      = .5,
+    segment.alpha     = .5,
+    segment.linetype  = "dotted",
+    segment.curvature = -0.1,
+    segment.ncp       = 3,
+    segment.angle     = 20,
+    box.padding       = .4
+  ) +
+
+  # Coordinate system: clip = "off" lets labels render outside the panel
+  coord_cartesian(clip = "off") +
+
+  scale_x_date(
+    expand = c(0, 0),
+    #limits = c(min(df$date), max(df$date) + 500),  # extra room for labels, originally 25
+    limits = c(as.Date("2001-01-01"), max(df$date) + 500),  # extra room for labels, originally 25
+    date_breaks = "5 years",
+    #date_labels = "%b %Y"
+    date_labels = "%Y"
+  ) +
+
+  scale_y_continuous(
+    expand = c(0, 0),
+    breaks = y_breaks
+  ) +
+
+  scale_color_manual(
+    values = c(
+      rcartocolor::carto_pal(
+        n    = n_distinct(df$keyword_label),
+        name = "Bold"
+      )
+    )
+  ) +
+  
+  ggtitle(paste0("Pages with keywords over time (",names(fname),")\n")) +
+  xlab("Date") + ylab("Count")
+# +
+  #labs(title = "Keyword counts over time")
+
+plt
+
+#ggsave("line_chart.png", plt, width = 10, height = 6, dpi = 150, bg = "grey98")
+#ggsave(file.path("figures","keyword_presence_over_time",
+#                 paste0(names(fname),".",dev_)), 
+#       plt, 
+#       width = w_, height = h_, dpi = dpi_, bg = "grey98",
+#       device=dev_)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+

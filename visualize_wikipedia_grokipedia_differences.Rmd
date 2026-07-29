@@ -1,0 +1,288 @@
+---
+title: "Visualize Wikipedia/Grokipedia differences"
+output: html_notebook
+---
+
+```{r Import libraries}
+library(tidyverse)
+source("code/ggplot_themes.R")
+```
+
+```{r Import data}
+kw_comparisons <- read_csv("output/corpus_comparisons/pairs.csv")
+kw_comparisons$title <- gsub("\\([^)]*\\)|\\.txt","",kw_comparisons$topic)
+kw_comparisons$title <- gsub("_", " ", kw_comparisons$title)
+
+```
+
+```{r Plotting}
+# Try a simple bar plot for each difference
+ggplot(data=kw_comparisons) +
+  geom_col(aes(
+    x=reorder(title,-genetics_diff_b_minus_a), 
+    y=genetics_diff_b_minus_a, 
+    fill=genetics_diff_b_minus_a>0
+    ),
+    width=1,
+    color="grey80",
+    linewidth=0.05) +
+  theme_endline() +
+  theme(
+        axis.text.x = element_text(angle=90, vjust = 0.5, hjust=1),
+  )  +
+  scale_fill_manual(
+    values = c(
+      rcartocolor::carto_pal(
+        n    = 2,
+        name = "Bold"
+      )
+    )
+  ) + 
+  xlab("Page") + ylab("More genetics keywords in: \n \u2190 Wikipedia        Grokipedia \u2192                              ")
+
+#+ 
+  #scale_fill_manual(values=c("#458B74","#7D26CD"))
+```
+
+
+```{r Genetics sections differences}
+
+out_dir <- "figures"
+
+genetics_sections <- read.csv("output/corpus_comparisons/genetics_sections/genetics_sections.csv")
+
+df <- genetics_sections %>%
+  mutate(
+    label = gsub("\\([^)]*\\)|\\.txt", "", page),
+    label = gsub("_", " ", label),
+    label = trimws(label)
+  )
+
+df <- df %>%
+  mutate(
+    diff = wiki_length - grok_length,
+    group = case_when(
+      wiki_length > 0 & grok_length > 0 ~ 1,
+      grok_length > 0 & wiki_length == 0 ~ 2,
+      wiki_length > 0 & grok_length == 0 ~ 3,
+      TRUE ~ 4
+    )
+  ) %>%
+  arrange(group, diff) %>%
+  mutate(label = factor(label, levels = label))
+
+ggplot(df, aes(x = label, y = -diff, fill = factor(group))) +
+  geom_col(show.legend = TRUE) +
+  scale_fill_manual(values = c("1" = "#4477AA", "2" = "#CC6677", "3" = "#228833"),
+                    labels = c("Both projects","Grokipedia only","Wikipedia only")) +
+  labs(
+    x = "Page name",
+    y = "Grokipedia length minus Wikipedia length",
+    title = "Differences in Grokipedia and Wikipedia genetics section lengths"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 6),
+        legend.position = "bottom") +
+  guides(fill = guide_legend(title = "Project:"))
+
+#ggsave(file.path(out_dir, "grokipedia_wikipedia_section_lengths.svg"),
+#       width=10,height=6,dpi=300,device="svg")
+
+# The reason Wikipedia sections can be longer but have fewer genetics keywords is because they can contain, e.g., lengthy excerpts, extensive methodological details, or quotes from researchers
+
+
+```
+
+```{r Genetics sections histograms}
+genetics_sections <- read.csv("output/corpus_comparisons/genetics_sections/genetics_sections.csv")
+
+# Might want this for histograms
+max_length <- plyr::round_any(max(c(genetics_sections$wiki_length, genetics_sections$grok_length)),1000,f=ceiling)
+
+# Convert to long format
+df_long <- genetics_sections %>%
+  select(page, wiki_length, grok_length) %>%
+  pivot_longer(cols = c(wiki_length, grok_length), names_to = "source", values_to = "length")
+
+# Plot histogram
+ggplot(df_long, aes(x = length, fill = source)) +
+  geom_histogram(position = "identity", alpha = 0.5, bins = 30) +
+  labs(x = "Length", y = "Count", fill = "Source") +
+  theme_endline() +
+  scale_fill_manual(
+    values = c(
+      rcartocolor::carto_pal(
+        n    = 2,
+        name = "Bold"
+      )
+    ),
+    labels = c("Wikipedia","Grokipedia")
+  ) +
+  ggtitle("Lengths of genetics sections") + 
+  guides(fill = guide_legend(title = "Project"))
+  #theme(legend.position="none")
+  #scale_fill_manual(values = c("wiki_length" = "#4477AA", "grok_length" = "#CC6677"))
+```
+
+```{r Comparing keyword counts}
+
+kw_counts_file <- "output/corpus_comparisons/plaintext_keyword_counts.csv"
+kw_counts <- read.csv(kw_counts_file)
+
+out_dir <- "figures"
+
+w_ <- 10
+h_ <- 6
+dev_ <- "png"
+dpi_ <- 300
+
+# Get total counts by project by page
+# Drop some variables to avoid double-counting
+drop_vars <- c("mt-DNA","y-DNA","x chromosom","y chromosom")
+drop_pages <- c("Black_people","White_people","Ashkenazi_Jews")
+kw_counts_total <- kw_counts %>%
+  filter(!(keyword %in% drop_vars) & !(page_name %in% drop_pages)) %>%
+  aggregate(count ~ project + page_name, FUN="sum")
+#kw_counts_totle <- kw_counts_total%>%
+  
+
+# Calculate differences
+df_wide <- kw_counts_total %>%
+  pivot_wider(names_from = project, values_from = count) %>%
+  mutate(grok_minus_wiki = Grokipedia - Wikipedia) %>%
+  select(page_name, count = Grokipedia, grok_minus_wiki) %>%
+  arrange(grok_minus_wiki)
+
+ggplot(df_wide, aes(x = fct_reorder(gsub("_", " ", page_name), grok_minus_wiki),
+                    y = grok_minus_wiki)) + 
+  geom_col(fill="#4477AA") + 
+  labs(
+    x = "Page name",
+    y = "Grokipedia keywords minus Wikipedia keywords\n
+    ←More on Wikipedia            More on Grokipedia→",
+    title = "Genetics keywords on Grokipedia versus Wikipedia"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 6))
+
+#ggsave(file.path(out_dir, paste0("grokipedia_wikipedia_kw_count_diffs.", dev_)),
+#       width=w_, height=h_, dpi=dpi_, device=dev_)
+
+```
+
+```{r Some summary stats of Grokipedia vs Wikipedia differences}
+
+# t-test of the number of keywords on pages
+t.test(kw_counts_total %>% filter(project=="Grokipedia") %>% pull(count),
+       kw_counts_total %>% filter(project=="Wikipedia") %>% pull(count), paired = TRUE)
+
+# Odds ratio for the presence of keywords
+kw_counts_total_wide <- kw_counts_total %>%
+  pivot_wider(names_from = project, values_from = count) %>%
+  mutate(
+    grok_nonzero = as.integer(Grokipedia != 0),
+    wiki_nonzero = as.integer(Wikipedia != 0)
+  )
+
+contingency <- table(kw_counts_total_wide$grok_nonzero, kw_counts_total_wide$wiki_nonzero)
+fisher.test(contingency)
+
+# Odds ratio for the presence of sections
+# Attach section lengths from the other data frame. Replace NAs with 0.
+kw_counts_total_sections <- kw_counts_total_wide %>% select(-grok_nonzero, -wiki_nonzero) %>%
+  left_join(genetics_sections, by=c("page_name"="page")) %>%
+  mutate(across(everything(), ~ replace_na(., 0))) %>%
+  mutate(
+    grok_nonzero = as.integer(grok_length != 0),
+    wiki_nonzero = as.integer(wiki_length != 0)
+  )
+
+contingency <- table(kw_counts_total_sections$grok_nonzero, kw_counts_total_sections$wiki_nonzero)
+fisher.test(contingency)
+
+```
+
+```{r Same as above, but sorted with geographical categories}
+
+# output parameters
+w_ <- 10
+h_ <- 6
+dpi_ <- 300
+dev_ <- "png"
+
+genetics_sections <- read.csv("output/corpus_comparisons/genetics_sections/genetics_sections.csv")
+geo_cats <- read_csv("metadata/geographical_regions.csv")
+
+# Recode geography
+
+geo_cats <- geo_cats %>%
+  mutate(region2 = case_when(
+    Region=="SOUTH CENTRAL ASIA" ~ "SC-ASIA",
+    Region=="EUROPE" ~ "EUR",
+    Region=="MIDDLE EAST NORTH AFRICA" ~ "MENA",
+    Region=="WESTERN HEMISPHERE" ~ "AMR-CAR",
+    Region=="EAST ASIA AND PACIFIC" ~ "E-ASIA-PAC",
+    Region=="SOUTHERN AFRICA" ~ "S-AFR")
+    )
+
+df <- genetics_sections %>%
+  mutate(
+    label = gsub("\\([^)]*\\)|\\.txt", "", page),
+    label = gsub("_", " ", label),
+    label = trimws(label)
+  ) %>%
+  left_join(geo_cats, by=c("label"="Demonym"))
+
+df <- df %>%
+  mutate(
+    diff = wiki_length - grok_length,
+    group = case_when(
+      wiki_length > 0 & grok_length > 0 ~ 1,
+      grok_length > 0 & wiki_length == 0 ~ 2,
+      wiki_length > 0 & grok_length == 0 ~ 3,
+      TRUE ~ 4
+    )
+  ) %>%
+  #arrange(group, diff) %>%
+  #arrange(region2, group, diff) %>%
+  arrange(region2, diff) %>%
+  mutate(label = factor(label, levels = label))
+
+# Join geo regions
+
+#ggplot(df, aes(x = label, y = -diff, fill = factor(group))) +
+ggplot(df, aes(x = label, y = -diff, fill = factor(group))) +
+  geom_col(show.legend = TRUE) +
+  scale_fill_manual(values = c("1" = "#4477AA", "2" = "#CC6677", "3" = "#F2B701"),
+                    labels = c("Both projects","Grokipedia only","Wikipedia only")) +
+  annotate("text", x=10, y = 10000, label="AMR") +
+  geom_vline(xintercept = 16.5, linetype="11") +
+  annotate("text", x=22.5, y = 10000, label="EASPAC") +
+  geom_vline(xintercept = 30.5, linetype="11") +
+  annotate("text", x=50, y = 10000, label="EUR") +
+  geom_vline(xintercept = 72.5, linetype="11") +
+  annotate("text", x=77, y = 10000, label="MENA") +
+  geom_vline(xintercept = 84.5, linetype="11") +
+  annotate("text", x=87, y = 11000, label="SAFR") +
+  geom_vline(xintercept = 88.5, linetype="11") +
+  annotate("text", x=92, y = 10000, label="SCAS") +
+  labs(
+    x = "Page name",
+    y = "Grokipedia length minus Wikipedia length\n
+    ←Longer on Wikipedia            Longer on Grokipedia→",
+    title = "Differences in Grokipedia and Wikipedia genetics section lengths"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 6),
+        legend.position = "bottom") +
+  guides(fill = guide_legend(title = "Genetics section(s) exist on:"))
+
+#ggsave(file.path("figures",
+#                 paste0("grokipedia_wikipedia_section_lengths_geo.",dev_)),
+#       device=dev_,
+#       dpi=dpi_, width=w_, height=h_)
+
+```
+
+
+

@@ -1,0 +1,596 @@
+---
+title: "Analyze seeded terminology"
+output: html_notebook
+---
+
+```{r Import libraries and metadata}
+library(RColorBrewer)
+library(qualpalr)
+library(ggrepel)
+library(tidyverse)
+
+first_revisions <- read_csv("metadata/corpus_first_revisions.csv")
+```
+# Page text data
+
+We're interested in some measures:
+1. What percent of paragraphs contain these genres of keywords?
+2. What percent of pages that existed at the time contain these genres of keywords?
+
+```{r Import data}
+
+parent_dir <- "data/paragraphs_with_keywords"
+
+# Get all directories of the format YYYY0101
+dirs <- list.dirs(parent_dir)
+dirs <- dirs[grepl("^data/paragraphs_with_keywords/\\d{4}0101$", dirs)]
+
+# Initialize the data frames
+pages_df <- data.frame()
+revisions_df <- data.frame()
+paragraphs_df <- data.frame()
+counts_df <- data.frame()
+corpus_df <- data.frame() # Number of total corpus pages by date
+
+# Loop through the directories and stack the data frames
+for (d in dirs) {
+  # The term counter skips empty paragraphs and categories
+  # We use the mask file to keep our data frames lined up
+  skipped <- as.logical(readLines(file.path(d, "skipped_counts.txt")))
+  pages <- readLines(file.path(d, "paragraphs_with_keywords_pages.txt"))[!skipped]
+  revisions <- as.numeric(readLines(file.path(d, "paragraphs_with_keywords_revisions.txt")))[!skipped]
+  paragraphs <- readLines(file.path(d, "paragraphs_with_keywords.txt"))[!skipped]
+  counts <- read.csv(file.path(d, "term_counts.csv"))
+  
+  # Add pages, drop unnecessary variables
+  counts$page <- pages
+  counts <- counts[,-which(names(counts) %in% c("id","document","total_terms"))]
+
+  if (!all(length(pages) == length(revisions),
+         length(pages) == length(paragraphs),
+         length(pages) == nrow(counts))) {
+  warning("Length mismatch in ", d)
+    print(paste("Pages:", length(pages)))
+    print(paste("Revisions:", length(revisions)))
+    print(paste("Paragraphs:", length(paragraphs)))
+    print(paste("Counts:", nrow(counts)))
+}
+  
+  fulldate <- as.Date(sub(".*/(\\d{8})$", "\\1", d), format = "%Y%m%d") - 1
+  
+  # Total corpus pages that existed at the time
+  #print(sum(first_revisions$datetime < fulldate + 1))
+
+  pages_df     <- rbind(pages_df,     data.frame(date = fulldate, page = pages))
+  revisions_df <- rbind(revisions_df, data.frame(date = fulldate, revision = revisions))
+  paragraphs_df <- rbind(paragraphs_df, data.frame(date = fulldate, paragraph = paragraphs))
+  counts_df    <- rbind(counts_df,    data.frame(date = fulldate, counts))
+  corpus_df    <- rbind(corpus_df, data.frame(date = fulldate, num_pages = sum(first_revisions$datetime < fulldate + 1)))
+}
+
+
+term_cols <- c(
+  "population_genetics_methods","statistical_clustering","ancestry_and_origins","phenotype_physical",
+  "medical_genetics","group_comparison","subsistence_mode","admixture_and_mixing","archaic_and_deep_lineage",
+  "social_structure","migration_conquest","race_classification","identity_and_ethnicity",
+  "language_and_linguistics","sourcing_and_evidence","religion","politics_and_statehood","hereditarian"
+)
+
+# Number of pages with paragraphs with keywords, per year
+sum_pages_by_year <- pages_df %>%
+  group_by(date) %>%
+  summarise(pages = n_distinct(page))
+
+# Summarize counts by page (sums the topics mentioned, probably not super useful)
+counts_df_sum <- counts_df %>%
+  group_by(date, page) %>%
+  summarise(across(all_of(term_cols), sum), .groups="drop")
+
+# Summarize counts by presence in paragraphs 
+# This counts how many paragraphs in a page mention a topic
+sum_pgh_presence_by_page <- counts_df %>%
+  mutate(across(all_of(term_cols), ~ as.integer(. != 0))) %>%
+  group_by(date, page) %>%
+  summarise(across(all_of(term_cols), sum), .groups="drop")
+
+# Summarize counts by presence in pages
+# This counts how many pages mention a topic
+sum_presence_by_page <- counts_df %>%
+  mutate(across(all_of(term_cols), ~ as.integer(. != 0))) %>%
+  group_by(date, page) %>%
+  summarise(across(all_of(term_cols), sum), .groups="drop") %>%
+  mutate(across(all_of(term_cols), ~ as.integer(. != 0))) %>%
+  group_by(date, page) %>%
+  summarise(across(all_of(term_cols), sum), .groups="drop")
+
+#parent_dir <- "data/paragraphs_with_keywords/20100101"
+```
+
+```{r Generate colour palettes}
+
+pal <- qualpal(
+  n = 12,
+  colorspace = list(h = c(0, 360), s = c(0.3, 0.8), l = c(0.4, 0.85))
+)
+
+pal$hex
+plot(pal)
+
+```
+
+```{r Plot time series of topics}
+
+# Scope of topics
+keep_cols <- c(
+  "population_genetics_methods",
+  "statistical_clustering",
+  "ancestry_and_origins",
+  "phenotype_physical",
+  "medical_genetics",
+  "group_comparison",
+  "subsistence_mode",
+  "admixture_and_mixing",
+  "archaic_and_deep_lineage",
+  "social_structure",
+  "race_classification",
+  "identity_and_ethnicity",
+  "language_and_linguistics",
+  "religion",
+  "hereditarian")
+
+names(keep_cols) <- c(
+  "Popgen terminology",
+  "Statistics & clustering",
+  "Ancestry & origins",
+  "Phenotypes",
+  "Medical genetics",
+  "Group comparisons",
+  "Subsistence",
+  "Admixture",
+  "Archaic",
+  "Social structure",
+  "Race",
+  "Identity & Ethnicity",
+  "Language",
+  "Religion",
+  "Hereditarianism")
+
+# Plot the proportion of pages per year that have a given topic.
+# This gives the proportion of all pages in the corpus
+df_plotting <- sum_presence_by_page %>%
+  group_by(date) %>%
+  summarise(across(all_of(keep_cols), ~ sum(. != 0))) %>%
+  pivot_longer(-date, names_to = "topic", values_to = "count") %>%
+  left_join(corpus_df) %>%
+  left_join(sum_pages_by_year) %>%
+  mutate(proportion_corpus = count/num_pages,
+         proportion_pages = count/pages)
+
+pal <- qualpal(
+  n = length(keep_cols),
+  colorspace = list(h = c(0, 360), s = c(0.3, 0.8), l = c(0.4, 0.85))
+)
+
+pal_cols <- pal$hex
+
+label_data <- df_plotting %>%
+  group_by(topic) %>%
+  filter(date == max(date)) %>%
+  slice(1) %>%
+  ungroup()
+
+label_push <- 5000
+
+ggplot(df_plotting, aes(x=as.Date(date), y = proportion_pages, colour = topic)) + 
+  geom_line() + 
+  ggtitle("Topics present in paragraphs with genetics keywords") +
+  ylab("Proportion of pages that have genetics keywords") + xlab("Date") +
+  scale_colour_manual(
+    values = pal_cols
+  ) + 
+    geom_text_repel(
+    data        = label_data,
+    aes(label   = topic, color = topic),
+    family      = "sans",
+    fontface    = "bold",
+    size        = 3.2,
+    direction   = "y",           # repel vertically only
+    xlim        = c(max(df_plotting$date) + label_push, NA),  # push labels past the last date
+    hjust       = 0,
+    segment.size      = .5,
+    segment.alpha     = .5,
+    segment.linetype  = "dotted",
+    segment.curvature = -0.1,
+    segment.ncp       = 3,
+    segment.angle     = 20,
+    box.padding       = .4
+  ) +
+  coord_cartesian(clip = "off") + # Coordinate system: clip = "off" lets labels render outside the panel
+  scale_x_date(
+    expand = c(0, 0),
+    limits = c(as.Date("2001-01-01"), as.Date("2026-01-01")),  # extra room for labels
+    date_breaks = "5 years",
+    date_labels = "%Y"
+  ) +
+  theme_endline() +
+  theme(plot.margin = margin(5.5, 120, 5.5, 5.5))  # bigger right margin (pt)
+
+#ggsave(file.path("figures","seeded_topics_pages.png"), device="png", bg = "grey98",
+#                 width=10, height=6, dpi=300)
+
+```
+
+
+
+```{r Output tables}
+
+# Plot the proportion of pages per year that have a given topic.
+# This gives the proportion of all pages in the corpus
+summary_table <- sum_presence_by_page %>%
+  group_by(date) %>%
+  summarise(across(all_of(keep_cols), ~ sum(. != 0))) %>%
+  pivot_longer(-date, names_to = "topic", values_to = "count") %>%
+  left_join(corpus_df) %>%
+  left_join(sum_pages_by_year) %>%
+  mutate(proportion_corpus = count/num_pages,
+         proportion_pages = count/pages)
+
+write_csv(summary_table, "output/text_themes_by_year.csv")
+
+# Get last year as latex table
+cat(knitr::kable(
+  summary_table %>% 
+    filter(date==as.Date("2025-12-31")) %>%
+    select(-date, -num_pages, -pages) %>%
+    mutate(across(c("proportion_corpus","proportion_pages"), round, 4)) %>%
+    arrange(-count)
+    ,
+  "latex")
+  )
+```
+
+```{r Compare relative to 2005-12-31}
+# See which themes have become more or less common
+temp1 <- subset(summary_table, date==as.Date("2005-12-31")) %>% select(date, topic, proportion_pages) %>%
+  arrange(date, topic) %>%
+  rename(topic_2006=topic, proportion_2006=proportion_pages) %>%
+  select(-date)
+  
+temp2 <- subset(summary_table, date==as.Date("2025-12-31")) %>% select(date, topic, proportion_pages) %>%
+  arrange(date, topic) %>%
+  rename(topic_2026=topic, proportion_2026=proportion_pages) %>%
+  select(-date)
+
+temp3 <- cbind(temp1, temp2)
+temp3$diff <- temp3$proportion_2026 - temp3$proportion_2006
+
+cat(knitr::kable(
+  temp3 %>% 
+    select(-topic_2026) %>%
+    mutate(across(c("proportion_2026","proportion_2006","diff"), round, 4)) %>%
+    arrange(-diff)
+    ,
+  "latex")
+  )
+```
+
+
+```{r Hierarchical clustering controlling for paragraph length}
+drop_cols <- c("politics_and_statehood", "migration_conquest",
+               "sourcing_and_evidence", "hereditarian")
+
+# Formatting function for correlations
+fmt_corr <- function(x) {
+  s <- sprintf("%.2f", x)
+  s <- sub("^0\\.", ".", s)
+  s <- sub("^-0\\.", "-.", s)
+  s <- sub("^1\\.00$", "1", s)
+  s <- sub("^-1\\.00$", "-1", s)
+  s
+}
+
+# Get counts of paragraphs
+temp <- pages_df %>%
+  filter(date==as.Date("2025-12-31")) %>%
+  count(page, sort = TRUE)
+
+sum_pgh_presence_by_page_pgh_rate <-
+  sum_pgh_presence_by_page %>% 
+  filter(date==as.Date("2025-12-31")) %>% # 2025 only
+  left_join(temp) %>% # join counts
+  filter(!is.na(n)) # drop pages without paragraphs
+
+# Proportions, restricted to pages with >=5 genetics paragraphs
+prop_mat <- sum_pgh_presence_by_page_pgh_rate %>%
+  filter(date == as.Date("2025-12-31"), n >= 5) %>%
+  mutate(across(-c(page, date, n, all_of(drop_cols)), ~ .x / n)) %>%
+  select(-page, -date, -n, -all_of(drop_cols))
+
+mat <- cor(prop_mat)
+
+#png("figures/hierarchical_clustering_topics_length_adjusted_2025.png", width = 800, height = 800)
+hc <- hclust(as.dist(1 - mat), method = "average")
+plot(hc, hang = -1, main = "Topic clustering (proportions, n >= 5)",
+     xlab = "", sub = "", ylab = "1 - r")
+rect.hclust(hc, k = 2, border = c("#D85A30", "#378ADD"))
+
+#dev.off()
+#dev.new()
+
+topic_order <- hc$labels[hc$order]   # or any order you want
+
+d <- cor(prop_mat) %>%
+  as.data.frame() %>% rownames_to_column("v1") %>%
+  pivot_longer(-v1, names_to = "v2", values_to = "r") %>%
+  mutate(v1 = factor(v1, levels = topic_order),
+         v2 = factor(v2, levels = topic_order)) %>%
+  filter(as.integer(v1) < as.integer(v2))   # lower triangle, no diagonal
+
+ggplot(d, aes(v1, v2, fill = r)) +
+  geom_tile(color = NA) +
+  geom_text(aes(label = sprintf("%.2f", r), color = abs(r) > 0.5),
+            size = 4, show.legend = FALSE) +
+  scale_color_manual(values = c("TRUE" = "white", "FALSE" = "grey20")) +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B",
+                       midpoint = 0, limits = c(-1, 1)) +
+  scale_x_discrete(labels = names(keep_cols) %>% setNames(keep_cols), limits = head(topic_order, -1)) +
+  scale_y_discrete(labels = names(keep_cols) %>% setNames(keep_cols), limits = rev(tail(topic_order, -1))) +
+  coord_fixed() +
+  labs(x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=13),
+        axis.text.y = element_text(size=13),
+        legend.position = "none") 
+
+#ggsave("figures/topics_text_corr_plot_length_adjusted.png", device="png",
+#       width=10, height=10, dpi=300)
+```
+
+
+```{r Use PCA to extract some examples}
+
+pca <- prcomp(prop_mat, scale. = TRUE)
+round(pca$rotation[, 1:2], 2)
+summary(pca)$importance[, 1:3]
+
+
+example_idxs <- order(pca$x[,1], decreasing=TRUE)[1:5] # Find outliers along PC1
+
+examples <- sum_pgh_presence_by_page_pgh_rate %>%
+  filter(date == as.Date("2025-12-31"), n >= 5)
+
+examples_pc1_high <- examples[example_idxs,]
+
+example_idxs <- order(pca$x[,1], decreasing=FALSE)[1:5] # Find outliers along PC1 (other end)
+
+examples <- sum_pgh_presence_by_page_pgh_rate %>%
+  filter(date == as.Date("2025-12-31"), n >= 5)
+
+examples_pc1_low <- examples[example_idxs,]
+
+example_idxs <- order(pca$x[,2], decreasing=TRUE)[1:5] # Find outliers along PC2
+
+examples <- sum_pgh_presence_by_page_pgh_rate %>%
+  filter(date == as.Date("2025-12-31"), n >= 5)
+
+examples_pc2_high <- examples[example_idxs,]
+
+example_idxs <- order(pca$x[,2], decreasing=FALSE)[1:5] # Find outliers along PC2 (other end)
+
+examples <- sum_pgh_presence_by_page_pgh_rate %>%
+  filter(date == as.Date("2025-12-31"), n >= 5)
+
+examples_pc2_low <- examples[example_idxs,]
+```
+
+# Talk page data
+
+```{r Analyze talk page data}
+
+talk_data_dir <- "data/talk_page_discussions_with_keywords/genetics_discussions" # genetics discussions
+nongenetics_talk_data_dir <- "" # nongenetics discussions
+
+talk_skipped <- as.logical(readLines(file.path(talk_data_dir, "skipped_counts.txt")))
+talk_term_counts <- read_csv(file.path(talk_data_dir, "term_counts.csv"))
+
+# Extract page name
+talk_term_counts$page <- sapply(strsplit(talk_term_counts$id, ".txt#"), `[`, 1)
+
+# Import discussion IDs for each page
+idx_dir <- file.path(talk_data_dir, "paragraphs_indices")
+
+# Import the discussion IDs for each file
+discussion_ids <- data.frame()
+for (f in list.files(idx_dir)){
+  temp_ids <- readLines(file.path(idx_dir, f))
+  discussion_ids <- rbind(discussion_ids, data.frame(id = temp_ids))
+  #revisions_df <- rbind(revisions_df, data.frame(date = fulldate, revision = revisions))
+}
+
+# Drop skipped observations to line up with talk_term_counts
+# BUG: These are misaligned. No impact on analysis but could muck things up elsewhere.
+discussion_ids <- discussion_ids[!talk_skipped, ,drop=FALSE]
+
+# Attach discussion IDs to talk term counts
+talk_term_counts$discussion_id <- discussion_ids$id
+
+# Drop document variable--redundant with page
+talk_term_counts <- talk_term_counts[,!(colnames(talk_term_counts) %in% c("document"))]
+
+# Reorder columns
+talk_term_counts <- talk_term_counts %>%
+  select(page, discussion_id, id,
+         total_terms, population_genetics_methods, statistical_clustering, ancestry_and_origins,
+         phenotype_physical, medical_genetics, group_comparison, subsistence_mode, admixture_and_mixing,
+         archaic_and_deep_lineage, social_structure, migration_conquest, race_classification,
+         identity_and_ethnicity, language_and_linguistics, sourcing_and_evidence, religion, politics_and_statehood,
+         hereditarian, culture_and_tradition)
+
+# Summarize each of the variables at these levels
+term_cols <- c(
+  "population_genetics_methods",
+  "statistical_clustering",
+  "ancestry_and_origins",
+  "phenotype_physical",
+  "medical_genetics",
+  "group_comparison",
+  "subsistence_mode",
+  "admixture_and_mixing",
+  "archaic_and_deep_lineage",
+  "social_structure",
+  "migration_conquest",
+  "race_classification",
+  "identity_and_ethnicity",
+  "language_and_linguistics",
+  "sourcing_and_evidence",
+  "religion",
+  "politics_and_statehood",
+  "hereditarian",
+  "culture_and_tradition"
+  )
+
+# Columns to keep
+keep_cols <- c(
+  "population_genetics_methods",
+  "statistical_clustering",
+  "ancestry_and_origins",
+  "phenotype_physical",
+  "medical_genetics",
+  "group_comparison",
+  "subsistence_mode",
+  "admixture_and_mixing",
+  "archaic_and_deep_lineage",
+  "social_structure",
+  #"migration_conquest",
+  "race_classification",
+  "identity_and_ethnicity",
+  "language_and_linguistics",
+  #"sourcing_and_evidence",
+  "religion",
+  #"politics_and_statehood",
+  "hereditarian"
+  #"culture_and_tradition"
+  )
+
+names(keep_cols) <- c(
+  "Popgen methods",
+  "Statistics & clustering",
+  "Ancestry & origins",
+  "Phenotypes",
+  "Medical genetics",
+  "Group comparison",
+  "Subsistence",
+  "Admixture",
+  "Archaic",
+  "Social structure",
+  #"migration_conquest",
+  "Race",
+  "Identity & ethnicity",
+  "Language",
+  #"Sourcing",
+  "Religion",
+  #"Politics & statehood",
+  "Hereditarianism"
+  #"Culture & tradition"
+  )
+
+# Sum by page
+# Number of times a word related to a topic appears in a page
+sum_by_page <- talk_term_counts %>%
+  group_by(page) %>%
+  summarise(across(all_of(term_cols), sum))
+
+# Sum by page and discussion_id
+# Number of times a word related to a topic appears in a discussion
+sum_by_page_discussion <- talk_term_counts %>%
+  group_by(page, discussion_id) %>%
+  summarise(across(all_of(term_cols), sum), .groups = "drop")
+
+# Presence by page (any non-zero across rows for that page)
+# Whether a topic appears at all in a talk page
+presence_by_page <- talk_term_counts %>%
+  group_by(page) %>%
+  summarise(across(all_of(term_cols), ~ as.integer(any(. != 0))))
+
+# Presence by page and discussion_id
+# Whether a topic appears at all in a discussion
+presence_by_page_discussion <- talk_term_counts %>%
+  group_by(page, discussion_id) %>%
+  summarise(across(all_of(term_cols), ~ as.integer(any(. != 0))), .groups = "drop")
+
+# Sum of presence by page
+# Number of discussions that mention the topics
+sum_presence_by_page <- presence_by_page_discussion %>%
+  group_by(page) %>%
+  summarise(across(all_of(term_cols), sum))
+
+# Proportion by page
+proportion_by_page <- presence_by_page_discussion %>%
+  group_by(page) %>%
+  summarise(across(all_of(term_cols), ~ mean(. != 0)))
+
+#test <- readLines(file.path(talk_data_dir, "paragraphs_indices", "'Ajam_of_Kuwait_section_ids.txt"))
+
+```
+
+
+```{r Visualize talk topic data}
+
+# First, plot the number of discussions by topic (in total)
+# Second, plot the number of pages with discussion topics
+
+# Third, highlight some outliers (hereditarianism)
+# These can lead into the Grokipedia analysis (to see how hereditarianism lives on in AI)
+
+# 1. Plot number of discussions by topic
+
+df_plotting_talk <- sum_presence_by_page %>%
+  pivot_longer(-page, names_to = "topic", values_to = "count")
+
+df_plotting_talk <- sum_presence_by_page %>%
+  select(-page) %>%
+  summarise(across(everything(), sum)) %>%
+  pivot_longer(everything(), names_to = "topic", values_to = "count") %>%
+  filter(topic %in% keep_cols)
+
+ggplot(df_plotting_talk, aes(x = reorder(topic, -count), y = count)) +
+  geom_col() +
+  theme_endline() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_x_discrete(labels = setNames(names(keep_cols), keep_cols)) +
+  ggtitle("Talk page discussions mentioning a topic") +
+  xlab("Topic") + ylab("Count")
+
+#ggsave("figures/talk_page_topics_count.png", device = "png", dpi=300,
+#       width=8, height=6)
+
+#2. Plot number of pages with discussions
+
+df_plotting_talk <- presence_by_page %>%
+  select(-page) %>%
+  summarise(across(everything(), sum)) %>%
+  pivot_longer(everything(), names_to = "topic", values_to = "count") %>%
+  filter(topic %in% keep_cols)
+
+ggplot(df_plotting_talk, aes(x = reorder(topic, -count), y = count)) +
+  geom_col() +
+  theme_endline() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_x_discrete(labels = setNames(names(keep_cols), keep_cols)) +
+  ggtitle("Talk pages mentioning a topic") +
+  xlab("Topic") + ylab("Count")
+
+#ggsave("figures/talk_page_topics_count_by_page.png", device = "png", dpi=300,
+#       width=8, height=6)
+
+slice_max(sum_presence_by_page[,c("page","hereditarian")], n=5, order_by = hereditarian)
+
+```
+
+```{r Output talk summary tables to latex}
+# fancy code to pass a function to cat and output the formatted topic names
+table_sum_pages %>%
+  mutate(topic = names(keep_cols)[match(topic, keep_cols)]) %>%
+  { cat(knitr::kable(., "latex")) }
+```
