@@ -87,9 +87,7 @@ sys.stderr = logf
 print("Article name: " + page_title)
 print("Revision file: " + revisions_path)
 
-# Switching this to revisions instead of revision IDs...
 # Import all revision IDs
-
 revisions = parse_revision_history(revisions_path)
 
 # The API returns results in chronological order (oldest first) so we need to reverse the list

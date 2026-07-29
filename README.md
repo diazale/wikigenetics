@@ -1,6 +1,6 @@
 # Human genetics research in the public-facing information ecosystem
 
-This repository contains the code used to collect and analyze data for the 2026 manuscript *From Wikipedia to AI: Measuring 25 years of synthesis of human genetics research in the public-facing information ecosystem*.
+This repository contains the code used to collect and analyze data for the 2026 manuscript *From Wikipedia to AI: Measuring 25 years of synthesis of human genetics research in the public-facing information ecosystem* (DOI pending).
 
 ## Data
 
@@ -18,6 +18,22 @@ Because the content is dynamic, it will not always match the data we have provid
 Smaller datasets, such as those used in analysis of LLM responses, are available in the `data` folder.
 
 Clickstream data can be downloaded at https://dumps.wikimedia.org/other/clickstream/
+
+### Summary data
+
+Some data has been summarized for convenience:
+* `contexts_summed_demonyms.tsv`: Binary time series of section contexts of demonyms
+* `LLM_keywords[...].xlsx`: Summaries of LLM responses to our queries
+* `macro_trends[...].tsv`: Summary data of macro trends in the corpus
+
+### Metadata
+
+* `all_pages_used.txt`: All pages used in the analysis
+* `allow_list_20260224.txt`: Files that remained after scoping
+* `categories_[...]`: Topic categories and their associated terms for paragraph analysis
+* `demonym_case_study_rev_ids_dec312025.txt`: Revision IDs of pages as of Dec 31, 2025
+* `demonyms.csv`: List of demonym pages and whether they existed or were redirects
+* `wikidata_ethnic_groups_query_202601_fromurl.txt`: Results from the wikidata query
 
 ## Code
 
@@ -81,3 +97,26 @@ Processed markup data is returned as a single JSON object with revision ID and m
 * `visualize_wikipedia_grokipedia_differences.Rmd`: Differences between Wikipedia and Grokipedia, plus some statistical tests
 * `wikipedia_sections_over_time.Rmd`: Visualizing section lengths over time. Also has some options for animated time series.
 * `mapping_cleaned.ipynb`: Generate maps
+
+## Data collection workflow
+
+A typical workflow is:
+1. Identify a Wikipedia page you are interested in
+2. Retrieve revisions with `get_revision_history.py`
+3. Retrieve contents for each revision with `get_article_contents.py`
+
+If you are interested in a category, steps 1-3 can be combined using `crawl_category.py`.
+
+4. Get all redirects using the function `get_redirects`
+5. Use the pages and their redirects in `get_pageviews.py` to get pageviews
+
+If you are interested in talk pages, do the same but just add `Talk:` to the start of every Wikipedia page.
+To get archived talk pages, use `get_subpages.py`.
+
+At this point you will have all of the Wikipedia data you need and you can filter as desired.
+
+We ran `keyword_extracton_regex.py` to identify genetic keywords in our markup, which outputs a JSON object
+summarizing the page, whether any keywords are present, the earliest/latest dates of keywords, and also
+the counts for each keyword. The script itself is not very efficient but only needs to be run once, presuming
+you have your keywords.  There are some hard-coded values specific to this project to filter for common false
+positives.

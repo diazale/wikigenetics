@@ -1,3 +1,9 @@
+"""
+Get revision histories from the Wikipedia API
+
+Authorship:
+- Alex Diaz-Papkovich
+"""
 from helper_functions import *
 
 import argparse
